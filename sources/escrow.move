@@ -165,4 +165,73 @@ module trustlock::escrow {
             escrow_id: object::id_from_address(buyer), // placeholder — will fix in tests
         });
     }
+
+    public fun release_milestone(
+        escrow: &mut Escrow,
+        index: u64,
+        ctx: &mut TxContext,
+    ) {
+        assert!(escrow.state == STATE_ACTIVE, EInvalidState);
+        assert!(tx_context::sender(ctx) == escrow.buyer, ENotBuyer);
+        assert!(index < vector::length(&escrow.milestones), EMilestoneOutOfRange);
+
+        let milestone = vector::borrow_mut(&mut escrow.milestones, index);
+        assert!(!milestone.released, EMilestoneAlreadyReleased);
+
+        let amount = milestone.amount;
+        milestone.released = true;
+
+        let payout = coin::split(&mut escrow.funds, amount, ctx);
+        let seller = escrow.seller;
+        let escrow_id = object::id(escrow);
+
+        transfer::public_transfer(payout, seller);
+
+        event::emit(MilestoneReleased {
+            escrow_id,
+            index,
+            amount,
+        });
+
+        // Auto-complete if all milestones are released
+        let all_done = check_all_released(&escrow.milestones);
+        if (all_done) {
+            escrow.state = STATE_COMPLETED;
+        };
+    }
+
+    // Internal helper — checks if every milestone has been released
+    fun check_all_released(milestones: &vector<Milestone>): bool {
+        let len = vector::length(milestones);
+        let mut i = 0;
+        while (i < len) {
+            if (!vector::borrow(milestones, i).released) {
+                return false
+            };
+            i = i + 1;
+        };
+        true
+    }
+
+    public fun raise_dispute(
+        escrow: &mut Escrow,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        assert!(escrow.state == STATE_ACTIVE, EInvalidState);
+
+        let caller = tx_context::sender(ctx);
+        assert!(
+            caller == escrow.buyer || caller == escrow.seller,
+            ENotBuyer // reusing — caller is neither party
+        );
+
+        escrow.state = STATE_DISPUTED;
+        escrow.dispute_raised_at = clock::timestamp_ms(clock);
+
+        event::emit(DisputeRaised {
+            escrow_id: object::id(escrow),
+            raised_by: caller,
+        });
+    }
 }
