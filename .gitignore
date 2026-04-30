@@ -1,0 +1,21 @@
+# Sui Move build outputs
+build/
+
+# Local Sui / Move toolchain state
+.sui/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# Environment files
+.env
+.env.*
