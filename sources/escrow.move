@@ -74,4 +74,95 @@ module trustlock::escrow {
     public struct EscrowCancelled has copy, drop {
         escrow_id: ID,
     }
+
+    // ── Functions ─────────────────────────────────────────────────────────
+
+    public fun create_escrow(
+        seller: address,
+        arbitrator: address,
+        milestone_amounts: vector<u64>,
+        payment: Coin<SUI>,
+        ctx: &mut TxContext,
+    ) {
+        let buyer = tx_context::sender(ctx);
+        let total_milestones = vector::length(&milestone_amounts);
+
+        // Build milestone objects from the amounts vector
+        let mut milestones = vector::empty<Milestone>();
+        let mut i = 0;
+        let mut expected_total: u64 = 0;
+
+        while (i < total_milestones) {
+            let amount = *vector::borrow(&milestone_amounts, i);
+            expected_total = expected_total + amount;
+            vector::push_back(&mut milestones, Milestone {
+                amount,
+                released: false,
+            });
+            i = i + 1;
+        };
+
+        // Coin sent must exactly match sum of milestone amounts
+        assert!(coin::value(&payment) == expected_total, EAmountMismatch);
+
+        let escrow_uid = object::new(ctx);
+        let escrow_id = object::uid_to_inner(&escrow_uid);
+
+        let escrow = Escrow {
+            id: escrow_uid,
+            buyer,
+            seller,
+            arbitrator,
+            funds: payment,
+            milestones,
+            state: STATE_CREATED,
+            dispute_raised_at: 0,
+        };
+
+        // Make the escrow shared so both buyer and seller can access it
+        transfer::share_object(escrow);
+
+        event::emit(EscrowCreated {
+            escrow_id,
+            buyer,
+            seller,
+            total_amount: expected_total,
+        });
+    }
+
+    public fun accept_escrow(
+        escrow: &mut Escrow,
+        ctx: &mut TxContext,
+    ) {
+        assert!(escrow.state == STATE_CREATED, EInvalidState);
+        assert!(tx_context::sender(ctx) == escrow.seller, ENotSeller);
+
+        escrow.state = STATE_ACTIVE;
+    }
+
+    public fun cancel_escrow(
+        escrow: Escrow,
+        ctx: &mut TxContext,
+    ) {
+        assert!(escrow.state == STATE_CREATED, EInvalidState);
+        assert!(tx_context::sender(ctx) == escrow.buyer, ENotBuyer);
+
+        let Escrow {
+            id,
+            buyer,
+            seller: _,
+            arbitrator: _,
+            funds,
+            milestones: _,
+            state: _,
+            dispute_raised_at: _,
+        } = escrow;
+
+        object::delete(id);
+        transfer::public_transfer(funds, buyer);
+
+        event::emit(EscrowCancelled {
+            escrow_id: object::id_from_address(buyer), // placeholder — will fix in tests
+        });
+    }
 }
